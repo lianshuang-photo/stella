@@ -16,6 +16,7 @@ import (
 	"golang.org/x/term"
 
 	apiclient "github.com/CherryHQ/stella/api/client"
+	apitypes "github.com/CherryHQ/stella/api/types"
 	"github.com/CherryHQ/stella/internal/email"
 )
 
@@ -51,21 +52,16 @@ func loadVaultEmailConfig(ctx context.Context, api *apiclient.Client) (*email.Co
 		return &email.Config{Accounts: make(map[string]email.EmailAccount)}, nil
 	}
 
-	var envelope struct {
-		Data struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
-		} `json:"data"`
-	}
-	if err := apiclient.DecodeJSON(resp, &envelope); err != nil {
+	var entry apitypes.VaultEntryValue
+	if err := apiclient.DecodeJSON(resp, &entry); err != nil {
 		return nil, err
 	}
 
 	cfg := &email.Config{Accounts: make(map[string]email.EmailAccount)}
-	if envelope.Data.Value == "" || envelope.Data.Value == "{}" {
+	if entry.Value == "" || entry.Value == "{}" {
 		return cfg, nil
 	}
-	if err := json.Unmarshal([]byte(envelope.Data.Value), cfg); err != nil {
+	if err := json.Unmarshal([]byte(entry.Value), cfg); err != nil {
 		return nil, fmt.Errorf("parse EMAIL_CONFIG from vault: %w", err)
 	}
 	if cfg.Accounts == nil {

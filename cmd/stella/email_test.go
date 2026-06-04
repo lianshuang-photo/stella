@@ -17,7 +17,7 @@ func emailVaultServer(t *testing.T) {
 	cfgValue := `{"default":"work","accounts":{"work":{"imap_host":"imap.example.com","smtp_host":"smtp.example.com","username":"u@example.com","password":"supersecret","from":"u@example.com"}}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		body := map[string]any{"data": map[string]any{"name": emailConfigKey, "value": cfgValue}}
+		body := map[string]any{"name": emailConfigKey, "value": cfgValue}
 		_ = json.NewEncoder(w).Encode(body)
 	}))
 	t.Cleanup(server.Close)
