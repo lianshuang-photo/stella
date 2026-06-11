@@ -213,3 +213,49 @@ func TestSerializeAssistantRows_mergedFirstRowID(t *testing.T) {
 		t.Errorf("id = %v, want msg-a1 (first row of merged turn)", m["id"])
 	}
 }
+
+// normalizeMessageTimeParam must convert any RFC3339 input into the DB's
+// naive-UTC layout so SQL/Go string comparison against ctx_message.created_at
+// is correctly ordered. Without this, a same-day RFC3339 upper bound like
+// "2026-06-11T10:00:00Z" lexicographically sorts after "2026-06-11 23:59:59"
+// (space < 'T'), silently letting later rows slip past the upper bound.
+func TestNormalizeMessageTimeParam(t *testing.T) {
+	str := func(s string) *string { return &s }
+
+	cases := []struct {
+		name string
+		in   *string
+		want *string
+	}{
+		{"nil passthrough", nil, nil},
+		{"empty passthrough", str(""), str("")},
+		{"rfc3339 Z", str("2026-06-11T10:00:00Z"), str("2026-06-11 10:00:00")},
+		{"rfc3339 nano", str("2026-06-11T10:00:00.123456789Z"), str("2026-06-11 10:00:00")},
+		{"rfc3339 offset normalizes to UTC", str("2026-06-11T18:00:00+08:00"), str("2026-06-11 10:00:00")},
+		{"already db layout passthrough", str("2026-06-11 10:00:00"), str("2026-06-11 10:00:00")},
+		{"garbage passthrough", str("not a date"), str("not a date")},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeMessageTimeParam(tc.in)
+			switch {
+			case tc.want == nil && got == nil:
+				return
+			case tc.want == nil || got == nil:
+				t.Fatalf("got %v, want %v", got, tc.want)
+			case *got != *tc.want:
+				t.Fatalf("got %q, want %q", *got, *tc.want)
+			}
+		})
+	}
+
+	// Regression guard: the boundary case from the review — a same-day row
+	// created at 23:59:59 must NOT lexicographically precede the normalized
+	// upper bound, so it gets filtered out as expected.
+	normalized := *normalizeMessageTimeParam(str("2026-06-11T10:00:00Z"))
+	dbRow := "2026-06-11 23:59:59"
+	if dbRow <= normalized {
+		t.Fatalf("expected %q > %q after normalize (so it would be filtered), but compare says no", dbRow, normalized)
+	}
+}

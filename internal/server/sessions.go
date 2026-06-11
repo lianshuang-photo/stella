@@ -585,12 +585,16 @@ func (s *Server) GetSessionMessages(w http.ResponseWriter, r *http.Request, agen
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
+	// Normalize before/after to the DB's naive-UTC layout so the string
+	// comparison in SQL and the Go fallback filter agree on ordering.
+	afterParam := normalizeMessageTimeParam(params.After)
+	beforeParam := normalizeMessageTimeParam(params.Before)
 	var rows []sqlc.CtxMessage
 	if limit > 0 {
 		pageRows, err := s.q.ListMessagesByLogicalPage(r.Context(), sqlc.ListMessagesByLogicalPageParams{
 			ConversationID: conv.ID,
-			After:          nilIfStringPtr(params.After),
-			Before:         nilIfStringPtr(params.Before),
+			After:          nilIfStringPtr(afterParam),
+			Before:         nilIfStringPtr(beforeParam),
 			Limit:          int64(limit),
 			Offset:         int64(skip),
 		})
@@ -606,7 +610,7 @@ func (s *Server) GetSessionMessages(w http.ResponseWriter, r *http.Request, agen
 			s.writeInternalError(w, err)
 			return
 		}
-		rows = filterMessageRowsByTime(rows, params.After, params.Before)
+		rows = filterMessageRowsByTime(rows, afterParam, beforeParam)
 	}
 
 	writeData(w, http.StatusOK, map[string]any{"messages": serializeDBMessages(rows)})
@@ -1179,6 +1183,28 @@ func nilIfStringPtr(p *string) any {
 		return nil
 	}
 	return *p
+}
+
+// dbTimeLayout matches the naive-UTC layout SQLite uses for ctx_message.created_at.
+// Comparisons against this column (both in SQL and the Go fallback filter) are
+// pure string compares, so all callers must normalize their before/after
+// parameters to this layout — otherwise a RFC3339 input like
+// "2026-06-11T10:00:00Z" lexicographically sorts after a same-day DB row like
+// "2026-06-11 23:59:59" (space < 'T'), silently letting later rows slip past
+// the upper bound.
+const dbTimeLayout = "2006-01-02 15:04:05"
+
+func normalizeMessageTimeParam(p *string) *string {
+	if p == nil || *p == "" {
+		return p
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, *p); err == nil {
+			s := t.UTC().Format(dbTimeLayout)
+			return &s
+		}
+	}
+	return p
 }
 
 func logicalPageRowsToMessages(rows []sqlc.ListMessagesByLogicalPageRow) []sqlc.CtxMessage {
